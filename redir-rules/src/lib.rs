@@ -172,9 +172,13 @@ impl fmt::Display for RuleError {
 /// What is wrong with a rule.
 #[derive(Debug, PartialEq, Eq)]
 pub enum RuleErrorKind {
+    /// `match` is missing, null or empty.
     EmptyMatch,
+    /// `output` is missing, null or empty.
     EmptyOutput,
     InvalidRegex(String),
+    /// Not a `{type, match, output}` object: unknown `type` or key, wrong value type...
+    Invalid(String),
 }
 
 impl fmt::Display for RuleErrorKind {
@@ -183,6 +187,7 @@ impl fmt::Display for RuleErrorKind {
             RuleErrorKind::EmptyMatch => f.write_str("empty match"),
             RuleErrorKind::EmptyOutput => f.write_str("empty output"),
             RuleErrorKind::InvalidRegex(e) => write!(f, "invalid regex: {e}"),
+            RuleErrorKind::Invalid(e) => write!(f, "invalid rule: {e}"),
         }
     }
 }

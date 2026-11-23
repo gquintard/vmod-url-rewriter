@@ -42,7 +42,7 @@ fn bench(c: &mut Criterion) {
     let last = format!("example.com/page{}.html", N - 1);
     assert_eq!(rules.lookup("example.com/re0/x").unwrap().index, 1);
     assert_eq!(rules.lookup(&last).unwrap().index, N);
-    assert!(rules.lookup("example.com/nothing").is_none());
+    assert!(rules.lookup("example.com/page9999.html").is_none());
 
     let mut g = c.benchmark_group("lookup");
     g.bench_function("hit_first", |b| {
@@ -50,7 +50,7 @@ fn bench(c: &mut Criterion) {
     });
     g.bench_function("hit_last", |b| b.iter(|| rules.lookup(black_box(&last))));
     g.bench_function("miss", |b| {
-        b.iter(|| rules.lookup(black_box("example.com/nothing")));
+        b.iter(|| rules.lookup(black_box("example.com/page9999.html")));
     });
     g.finish();
 }

@@ -31,10 +31,11 @@ Used by [`vmod_redir`](../vmod_redir) to expose these rules to Varnish VCL.
 
 `just bench` (criterion) with 5 000 rules: 80% exact `example.com/page{i}.html`, 15% wildcard
 `example.com/dir{i}/*`, 5% regex `^example\.com/re{i}/(\w+)$`.
+The miss looks up `example.com/page9999.html`: a miss scans every rule, like a hit on the last one.
 
 | benchmark          | time     |
 | :----------------- | -------: |
-| `load/5000`        | 129 ms   |
-| `lookup/hit_first` | 178 ns   |
-| `lookup/hit_last`  | 110 µs   |
-| `lookup/miss`      | 27 µs    |
+| `load/5000`        | 117 ms   |
+| `lookup/hit_first` | 127 ns   |
+| `lookup/hit_last`  | 109 µs   |
+| `lookup/miss`      | 111 µs   |

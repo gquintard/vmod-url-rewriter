@@ -78,7 +78,7 @@ rules: no rule matched "example.com/other"
 
 ## Performance
 
-Lookups are a linear scan. With 5 000 rules, a miss costs about 27 µs and loading about 130 ms, see [redir-rules](redir-rules/README.md) for details.
+Lookups are a linear scan. With 5 000 rules, a miss (or a hit on the last rule) costs about 110 µs and loading about 120 ms, see [redir-rules](redir-rules/README.md) for details.
 
 ## Requirements
 

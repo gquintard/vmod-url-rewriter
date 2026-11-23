@@ -5,39 +5,52 @@ use crate::glob::Glob;
 use crate::{Kind, LoadError, Matcher, Rule, RuleError, RuleErrorKind};
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, expecting = "a {type, match, output} object")]
 struct RawRule {
     #[serde(rename = "type")]
     kind: Kind,
     #[serde(rename = "match")]
-    pattern: String,
-    output: String,
+    pattern: Option<String>,
+    output: Option<String>,
 }
 
 pub(crate) fn load(text: &str) -> Result<Vec<Rule>, LoadError> {
     // A null document (empty or comment-only file) is zero rules.
-    let raw: Option<Vec<RawRule>> =
+    // Each rule is deserialized on its own, so that all invalid rules are reported.
+    let raw: Option<Vec<serde_norway::Value>> =
         serde_norway::from_str(text).map_err(|e| LoadError::Yaml(e.to_string()))?;
     let mut rules = Vec::new();
     let mut errors = Vec::new();
-    for (i, r) in raw.unwrap_or_default().into_iter().enumerate() {
+    for (i, v) in raw.unwrap_or_default().into_iter().enumerate() {
         let index = i + 1;
-        if r.pattern.is_empty() {
+        let r: RawRule = match serde_norway::from_value(v) {
+            Ok(r) => r,
+            Err(e) => {
+                errors.push(RuleError {
+                    index,
+                    kind: RuleErrorKind::Invalid(e.to_string()),
+                });
+                continue;
+            }
+        };
+        let pattern = r.pattern.unwrap_or_default();
+        let output = r.output.unwrap_or_default();
+        if pattern.is_empty() {
             errors.push(RuleError {
                 index,
                 kind: RuleErrorKind::EmptyMatch,
             });
         }
-        if r.output.is_empty() {
+        if output.is_empty() {
             errors.push(RuleError {
                 index,
                 kind: RuleErrorKind::EmptyOutput,
             });
         }
         let matcher = match r.kind {
-            Kind::Exact => Matcher::Exact(r.pattern),
-            Kind::Wildcard => Matcher::Wildcard(Glob::new(&r.pattern)),
-            Kind::Regex => match Regex::new(&r.pattern) {
+            Kind::Exact => Matcher::Exact(pattern),
+            Kind::Wildcard => Matcher::Wildcard(Glob::new(&pattern)),
+            Kind::Regex => match Regex::new(&pattern) {
                 Ok(re) => Matcher::Regex(re),
                 Err(e) => {
                     errors.push(RuleError {
@@ -48,10 +61,7 @@ pub(crate) fn load(text: &str) -> Result<Vec<Rule>, LoadError> {
                 }
             },
         };
-        rules.push(Rule {
-            matcher,
-            output: r.output,
-        });
+        rules.push(Rule { matcher, output });
     }
     if errors.is_empty() {
         Ok(rules)
@@ -102,15 +112,68 @@ mod tests {
     }
 
     #[test]
-    fn schema_errors_are_yaml_errors() {
-        for t in [
-            "- {type: glob, match: a, output: b}",
-            "- {type: exact, output: b}",
-            "- {type: exact, match: a, output: b, code: 301}",
-            "type: exact",
-        ] {
+    fn non_list_is_a_yaml_error() {
+        for t in ["type: exact", "- [unclosed"] {
             assert!(
                 matches!(Rules::from_yaml(t), Err(LoadError::Yaml(_))),
+                "{t}"
+            );
+        }
+    }
+
+    #[test]
+    fn schema_errors_are_rule_errors() {
+        for t in [
+            "- {type: glob, match: a, output: b}",
+            "- {match: a, output: b}",
+            "- {type: exact, match: a, output: b, code: 301}",
+            "- foo",
+        ] {
+            let e = Rules::from_yaml(t).unwrap_err();
+            assert!(
+                matches!(&e, LoadError::Rules(v) if v.len() == 1 && v[0].index == 1
+                    && matches!(v[0].kind, RuleErrorKind::Invalid(_))),
+                "{t}: {e:?}"
+            );
+            assert!(e.to_string().starts_with("rule #1: invalid rule: "), "{e}");
+        }
+    }
+
+    #[test]
+    fn schema_and_regex_errors_reported_together() {
+        let e = Rules::from_yaml(
+            "- {type: exact, match: a, output: b}\n- {type: regex, match: '(', output: b}\n- {type: glob, match: a, output: b}\n",
+        )
+        .unwrap_err();
+        let LoadError::Rules(v) = e else {
+            panic!("{e:?}")
+        };
+        assert_eq!(v.iter().map(|e| e.index).collect::<Vec<_>>(), [2, 3]);
+        assert!(matches!(v[0].kind, RuleErrorKind::InvalidRegex(_)));
+        assert!(matches!(v[1].kind, RuleErrorKind::Invalid(_)));
+    }
+
+    #[test]
+    fn missing_or_null_fields_are_empty() {
+        for (t, kind) in [
+            ("- {type: exact, output: b}", RuleErrorKind::EmptyMatch),
+            (
+                "- {type: exact, match: ~, output: b}",
+                RuleErrorKind::EmptyMatch,
+            ),
+            ("- {type: exact, match: a}", RuleErrorKind::EmptyOutput),
+            (
+                "- {type: exact, match: a, output: ~}",
+                RuleErrorKind::EmptyOutput,
+            ),
+            (
+                "- {type: exact, match: a, output: null}",
+                RuleErrorKind::EmptyOutput,
+            ),
+        ] {
+            assert_eq!(
+                Rules::from_yaml(t).err(),
+                Some(LoadError::Rules(vec![RuleError { index: 1, kind }])),
                 "{t}"
             );
         }
