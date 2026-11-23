@@ -18,3 +18,10 @@ serde_norway = "0.9"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+criterion = "0.8"
+
+[[bench]]
+name = "rules"
+harness = false
