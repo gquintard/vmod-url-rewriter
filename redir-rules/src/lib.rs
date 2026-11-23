@@ -17,6 +17,7 @@ use std::fmt;
 
 use serde::Deserialize;
 
+mod glob;
 mod load;
 
 /// The kind of a rule, as written in the `type` field.
@@ -41,6 +42,7 @@ impl fmt::Display for Kind {
 #[derive(Debug)]
 pub(crate) enum Matcher {
     Exact(String),
+    Wildcard(glob::Glob),
 }
 
 #[derive(Debug)]
@@ -85,6 +87,11 @@ impl Rules {
     pub fn lookup<'a>(&'a self, s: &str) -> Option<Match<'a>> {
         self.rules.iter().enumerate().find_map(|(i, rule)| {
             let (kind, pattern, output) = match &rule.matcher {
+                Matcher::Wildcard(g) => g.is_match(s).then_some((
+                    Kind::Wildcard,
+                    g.as_str(),
+                    Cow::Borrowed(rule.output.as_str()),
+                ))?,
                 Matcher::Exact(m) => (m == s).then_some((
                     Kind::Exact,
                     m.as_str(),
@@ -179,5 +186,29 @@ pub(crate) mod test_util {
 
     pub fn out(r: &Rules, s: &str) -> Option<String> {
         r.lookup(s).map(|m| m.output.into_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_util::out;
+    use crate::{Kind, Rules};
+
+    #[test]
+    fn wildcard_output_drops_tail() {
+        let r = Rules::from_yaml(
+            "- {type: wildcard, match: 'example.com/trolo/*', output: trololo.com}",
+        )
+        .unwrap();
+        assert_eq!(
+            out(&r, "example.com/trolo/a/b.html").as_deref(),
+            Some("trololo.com")
+        );
+        let m = r.lookup("example.com/trolo/").unwrap();
+        assert_eq!(
+            (m.index, m.kind, m.pattern),
+            (1, Kind::Wildcard, "example.com/trolo/*")
+        );
+        assert_eq!(r.lookup("example.com/trolo"), None);
     }
 }

@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use crate::glob::Glob;
 use crate::{Kind, LoadError, Matcher, Rule, RuleError, RuleErrorKind};
 
 #[derive(Deserialize)]
@@ -34,7 +35,8 @@ pub(crate) fn load(text: &str) -> Result<Vec<Rule>, LoadError> {
         }
         let matcher = match r.kind {
             Kind::Exact => Matcher::Exact(r.pattern),
-            Kind::Wildcard | Kind::Regex => unimplemented!(),
+            Kind::Wildcard => Matcher::Wildcard(Glob::new(&r.pattern)),
+            Kind::Regex => unimplemented!(),
         };
         rules.push(Rule {
             matcher,
