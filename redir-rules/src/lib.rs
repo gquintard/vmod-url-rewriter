@@ -43,6 +43,7 @@ impl fmt::Display for Kind {
 pub(crate) enum Matcher {
     Exact(String),
     Wildcard(glob::Glob),
+    Regex(regex::Regex),
 }
 
 #[derive(Debug)]
@@ -92,6 +93,12 @@ impl Rules {
                     g.as_str(),
                     Cow::Borrowed(rule.output.as_str()),
                 ))?,
+                Matcher::Regex(re) => {
+                    let caps = re.captures(s)?;
+                    let mut expanded = String::new();
+                    caps.expand(&rule.output, &mut expanded);
+                    (Kind::Regex, re.as_str(), Cow::Owned(expanded))
+                }
                 Matcher::Exact(m) => (m == s).then_some((
                     Kind::Exact,
                     m.as_str(),
@@ -192,7 +199,7 @@ pub(crate) mod test_util {
 #[cfg(test)]
 mod tests {
     use crate::test_util::out;
-    use crate::{Kind, Rules};
+    use crate::{Kind, LoadError, RuleErrorKind, Rules};
 
     #[test]
     fn wildcard_output_drops_tail() {
@@ -210,5 +217,62 @@ mod tests {
             (1, Kind::Wildcard, "example.com/trolo/*")
         );
         assert_eq!(r.lookup("example.com/trolo"), None);
+    }
+
+    #[test]
+    fn regex_captures() {
+        let r = Rules::from_yaml(
+            r"- {type: regex, match: 'example\.com/index(fr|en)$', output: 'trololo.com/index$1'}",
+        )
+        .unwrap();
+        assert_eq!(
+            out(&r, "example.com/indexfr").as_deref(),
+            Some("trololo.com/indexfr")
+        );
+        assert_eq!(
+            out(&r, "www.example.com/indexen").as_deref(),
+            Some("trololo.com/indexen")
+        );
+        assert_eq!(r.lookup("example.com/indexfr/x"), None);
+        let m = r.lookup("example.com/indexfr").unwrap();
+        assert_eq!(
+            (m.index, m.kind, m.pattern),
+            (1, Kind::Regex, r"example\.com/index(fr|en)$")
+        );
+    }
+
+    #[test]
+    fn regex_named_and_dollar() {
+        let r = Rules::from_yaml(
+            r"- {type: regex, match: '^/(?P<lang>[a-z]{2})/', output: '/${lang}/$$'}",
+        )
+        .unwrap();
+        assert_eq!(out(&r, "/fr/page").as_deref(), Some("/fr/$"));
+    }
+
+    #[test]
+    fn dollar_name_greediness() {
+        let r = Rules::from_yaml(
+            "- {type: regex, match: '^/(a)', output: 'x$1foo'}\n- {type: regex, match: '^/(b)', output: 'x${1}foo'}",
+        )
+        .unwrap();
+        // `$1foo` refers to a group named "1foo", which doesn't exist.
+        assert_eq!(out(&r, "/a").as_deref(), Some("x"));
+        assert_eq!(out(&r, "/b").as_deref(), Some("xbfoo"));
+    }
+
+    #[test]
+    fn regex_empty_expansion_still_matches() {
+        let r = Rules::from_yaml("- {type: regex, match: '^/(x?)$', output: '$1'}").unwrap();
+        assert_eq!(out(&r, "/").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn invalid_regex_is_rule_error() {
+        let e = Rules::from_yaml("- {type: regex, match: '(', output: o}").unwrap_err();
+        assert!(
+            matches!(&e, LoadError::Rules(v) if v.len() == 1 && v[0].index == 1 && matches!(v[0].kind, RuleErrorKind::InvalidRegex(_))),
+            "{e:?}"
+        );
     }
 }

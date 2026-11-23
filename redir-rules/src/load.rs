@@ -1,3 +1,4 @@
+use regex::Regex;
 use serde::Deserialize;
 
 use crate::glob::Glob;
@@ -36,7 +37,16 @@ pub(crate) fn load(text: &str) -> Result<Vec<Rule>, LoadError> {
         let matcher = match r.kind {
             Kind::Exact => Matcher::Exact(r.pattern),
             Kind::Wildcard => Matcher::Wildcard(Glob::new(&r.pattern)),
-            Kind::Regex => unimplemented!(),
+            Kind::Regex => match Regex::new(&r.pattern) {
+                Ok(re) => Matcher::Regex(re),
+                Err(e) => {
+                    errors.push(RuleError {
+                        index,
+                        kind: RuleErrorKind::InvalidRegex(e.to_string()),
+                    });
+                    continue;
+                }
+            },
         };
         rules.push(Rule {
             matcher,
