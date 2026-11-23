@@ -1,0 +1,49 @@
+varnishtest "unreadable files and invalid rules fail the VCL load"
+
+shell {printf -- '- [unclosed' > ${tmpdir}/bad_yaml.yaml}
+shell {printf -- "- {type: regex, match: '(', output: o}\n" > ${tmpdir}/bad_regex.yaml}
+shell {printf -- "- {type: exact, match: '', output: o}\n- {type: exact, match: m, output: ''}\n" > ${tmpdir}/empty_fields.yaml}
+
+server s1 {} -start
+
+varnish v1 -vcl+backend {} -start
+
+varnish v1 -errvcl {r: cannot read} {
+    import redir from "${vmod}";
+    backend be none;
+    sub vcl_init {
+        new r = redir.rules("${tmpdir}/does_not_exist.yaml");
+    }
+}
+
+varnish v1 -errvcl {invalid YAML} {
+    import redir from "${vmod}";
+    backend be none;
+    sub vcl_init {
+        new r = redir.rules("${tmpdir}/bad_yaml.yaml");
+    }
+}
+
+varnish v1 -errvcl {rule #1: invalid regex} {
+    import redir from "${vmod}";
+    backend be none;
+    sub vcl_init {
+        new r = redir.rules("${tmpdir}/bad_regex.yaml");
+    }
+}
+
+varnish v1 -errvcl {rule #1: empty match} {
+    import redir from "${vmod}";
+    backend be none;
+    sub vcl_init {
+        new r = redir.rules("${tmpdir}/empty_fields.yaml");
+    }
+}
+
+varnish v1 -errvcl {rule #2: empty output} {
+    import redir from "${vmod}";
+    backend be none;
+    sub vcl_init {
+        new r = redir.rules("${tmpdir}/empty_fields.yaml");
+    }
+}

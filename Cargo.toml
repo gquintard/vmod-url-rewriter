@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["redir-rules"]
+members = ["redir-rules", "vmod_redir"]
 
 [workspace.package]
 edition = "2024"
