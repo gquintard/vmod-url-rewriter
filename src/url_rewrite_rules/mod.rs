@@ -48,8 +48,8 @@ pub(crate) struct Rule {
     /// The `match` field, as written.
     pub pattern: String,
     pub output: String,
-    /// For a `regex` rule, expands its captures into `output`.
-    pub captures: Option<captures::Expander>,
+    /// For a `regex` rule whose `output` has a `$`, expands its captures into `output`.
+    pub captures: Option<captures::LazyExpander>,
 }
 
 /// The rule that matched a lookup, and what it produced.
@@ -84,7 +84,21 @@ impl Rules {
     /// [`LoadError::Rules`] listing every invalid rule otherwise, [`LoadError::Compile`] if the
     /// rules are too big to compile together.
     pub fn from_yaml(text: &str) -> Result<Rules, LoadError> {
-        let (set, rules) = load::load(text)?;
+        Rules::from_yaml_with_limit(text, Rules::DEFAULT_BUILD_LIMIT)
+    }
+
+    /// Default of [`Rules::from_yaml_with_limit`]'s `build_limit`: 1 GiB.
+    pub const DEFAULT_BUILD_LIMIT: usize = 1 << 30;
+
+    /// Like [`Rules::from_yaml`], with at most `build_limit` bytes to build the DFA of all rules
+    /// (the result is much smaller). Rules needing more fail with [`RuleErrorKind::TooComplex`]
+    /// if they are too complex on their own, [`LoadError::Compile`] otherwise.
+    ///
+    /// # Errors
+    ///
+    /// As [`Rules::from_yaml`].
+    pub fn from_yaml_with_limit(text: &str, build_limit: usize) -> Result<Rules, LoadError> {
+        let (set, rules) = load::load(text, build_limit)?;
         Ok(Rules { set, rules })
     }
 
@@ -94,7 +108,7 @@ impl Rules {
         let i = self.set.first(s)?;
         let rule = &self.rules[i];
         let output = match &rule.captures {
-            Some(expander) => Cow::Owned(expander.expand(s, &rule.output)?),
+            Some(expander) => Cow::Owned(expander.expand(&rule.pattern, s, &rule.output)?),
             None => Cow::Borrowed(rule.output.as_str()),
         };
         Some(Match {
@@ -219,6 +233,13 @@ mod tests {
             (1, Kind::Wildcard, "example.com/trolo/*")
         );
         assert_eq!(r.lookup("example.com/trolo"), None);
+    }
+
+    #[test]
+    fn regex_output_without_dollar_needs_no_captures() {
+        let r = Rules::from_yaml(r"- {type: regex, match: '^/(\w+)$', output: /fixed}").unwrap();
+        assert!(r.rules[0].captures.is_none());
+        assert_eq!(out(&r, "/abc").as_deref(), Some("/fixed"));
     }
 
     #[test]

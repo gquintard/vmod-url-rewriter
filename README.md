@@ -82,24 +82,27 @@ At load time, every rule becomes one regex: `exact` is escaped and anchored, `wi
 escaped with each `*` turned into `(?s:.*)` and anchored, `regex` is used as-is. All of them are
 compiled into one DFA ([`regex-automata`](https://docs.rs/regex-automata)), which an overlapping
 search runs over the string once, reporting only the rules that matched; the lowest-numbered one
-wins. Only then does a `regex` rule run on its own, to expand its captures. Lookup time thus
+wins. Only then does a `regex` rule whose `output` has a `$` run on its own, to expand its
+captures: its engine is built on the rule's first hit (~50 µs, once) and then shared by all
+threads, so rules that never match cost no memory for it. Lookup time thus
 barely depends on the number of rules or on the position of the matching rule.
 
 The DFA is fully built at load time and shared read-only: lookups keep no per-thread state, so
 memory doesn't grow with the number of Varnish threads. A `regex` rule hit allocates a little
 scratch space for its captures. The DFA stays dense (fastest) up to 128 MiB, beyond that it is
 converted to a sparse DFA, typically 10x smaller for a 3x slower search. Building it may use up to
-1 GiB: a file needing more fails to load, naming the `regex` rules too complex on their own, if
-any. Unicode classes are what make DFAs big, which is why `\w`, `\d`, `\s` and `\b` are
+1 GiB, or `max_build_mb` MiB if given (`url_rewriter.rules(path, max_build_mb = 256)`): a file
+needing more fails to load, naming the `regex` rules too complex on their own, if any. Unicode classes are what make DFAs big, which is why `\w`, `\d`, `\s` and `\b` are
 ASCII-only; large `\p{..}` classes or bounded repetitions (`(a|b)*a(a|b){30}`) can still blow up.
 
-With `^example\.com/re{i}/(\w+)$` rules only, measured with a release build:
+With `^example\.com/re{i}/(\w+)$` rules only, all with `$1` in `output`, measured with a release
+build (RSS doesn't grow once every rule has been hit):
 
 | rules   | load   | RSS after load | `regex` hit | miss  |
 | ------: | -----: | -------------: | ----------: | ----: |
 | 1 000   | 23 ms  | 9 MiB          | 220 ns      | 23 ns |
-| 20 000  | 0.5 s  | 134 MiB        | 350 ns      | 25 ns |
-| 100 000 | 2.8 s  | 465 MiB        | 450 ns      | 29 ns |
+| 20 000  | 0.5 s  | 107 MiB        | 350 ns      | 25 ns |
+| 100 000 | 3.0 s  | 320 MiB        | 450 ns      | 29 ns |
 
 `just bench` (criterion) with 5 000 rules: 80% exact `example.com/page{i}.html`, 15% wildcard
 `example.com/dir{i}/*`, 5% regex `^example\.com/re{i}/(\w+)$`.

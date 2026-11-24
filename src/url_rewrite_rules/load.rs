@@ -1,12 +1,9 @@
 use regex_syntax::hir::Hir;
 use serde::Deserialize;
 
-use crate::url_rewrite_rules::captures::Expander;
+use crate::url_rewrite_rules::captures::LazyExpander;
 use crate::url_rewrite_rules::set::PatternMatcher;
 use crate::url_rewrite_rules::{Kind, LoadError, Rule, RuleError, RuleErrorKind, glob, syntax};
-
-/// Most memory that building the DFA of all rules may use (the result is much smaller).
-const DFA_SIZE_LIMIT: usize = 1 << 30;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, expecting = "a {type, match, output} object")]
@@ -18,12 +15,9 @@ struct RawRule {
     output: Option<String>,
 }
 
-/// Parse and validate `text`, and compile every rule into one matcher, pattern `i` being rule `i`.
-pub(crate) fn load(text: &str) -> Result<(PatternMatcher, Vec<Rule>), LoadError> {
-    load_with_limit(text, DFA_SIZE_LIMIT)
-}
-
-fn load_with_limit(
+/// Parse and validate `text`, and compile every rule into one matcher, pattern `i` being rule `i`,
+/// using at most `size_limit` bytes to build its DFA.
+pub(crate) fn load(
     text: &str,
     size_limit: usize,
 ) -> Result<(PatternMatcher, Vec<Rule>), LoadError> {
@@ -75,19 +69,8 @@ fn load_with_limit(
                 continue;
             }
         };
-        let captures = match r.kind {
-            Kind::Regex => match Expander::new(&hir) {
-                Ok(e) => Some(e),
-                Err(e) => {
-                    errors.push(RuleError {
-                        index,
-                        kind: RuleErrorKind::InvalidRegex(e),
-                    });
-                    continue;
-                }
-            },
-            Kind::Exact | Kind::Wildcard => None,
-        };
+        // Without a `$`, `output` is used as is.
+        let captures = (r.kind == Kind::Regex && output.contains('$')).then(LazyExpander::default);
         hirs.push(hir);
         rules.push(Rule {
             kind: r.kind,
@@ -235,7 +218,7 @@ mod tests {
     #[test]
     fn too_complex_regex_is_rule_error() {
         let text = "- {type: exact, match: a, output: o}\n- {type: regex, match: '(a|b)*a(a|b){16}', output: o}\n- {type: regex, match: 'x', output: o}\n";
-        let Err(LoadError::Rules(v)) = super::load_with_limit(text, 1 << 20) else {
+        let Err(LoadError::Rules(v)) = Rules::from_yaml_with_limit(text, 1 << 20) else {
             panic!("expected rule errors")
         };
         assert_eq!(
@@ -246,7 +229,7 @@ mod tests {
             }]
         );
         assert_eq!(v[0].to_string(), "rule #2: regex too complex to precompute");
-        assert!(super::load_with_limit(text, 1 << 30).is_ok());
+        assert!(Rules::from_yaml(text).is_ok());
     }
 
     #[test]

@@ -65,7 +65,7 @@ import url_rewriter from "path/to/liburl_rewriter.so";
 
 ## Object `Rules`
 
-### Constructor `url_rewriter.rules(STRING path)`
+### Constructor `url_rewriter.rules(STRING path, INT max_build_mb = 1024)`
 
 Load the rules from the YAML file at `path`, used as given: a relative path is
 resolved against varnishd's working directory.
@@ -73,6 +73,10 @@ resolved against varnishd's working directory.
 The file is read once, when the VCL loads. An unreadable file, invalid YAML, or any
 invalid rule (unknown type, missing or empty field, invalid regex) fails the VCL
 load, listing every invalid rule.
+
+All rules are compiled into one DFA at load time, which may use up to
+`max_build_mb` MiB of memory (the result is much smaller): rules needing more fail
+the load, those too complex on their own being listed.
 
 ### Method `STRING <object>.lookup(STRING s)`
 
