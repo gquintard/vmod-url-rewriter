@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 regex = "1"
+regex-automata = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_norway = "0.9"
 varnish = "0.8"

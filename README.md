@@ -78,18 +78,28 @@ rules: no rule matched "example.com/other"
 
 ## Performance
 
-Lookups are a linear scan over the rules, in order.
+At load time, every rule becomes one regex: `exact` is escaped and anchored, `wildcard` is
+escaped with each `*` turned into `(?s:.*)` and anchored, `regex` is used as-is. All of them are
+compiled into one lazy DFA ([`regex-automata`](https://docs.rs/regex-automata)), which an
+overlapping search runs over the string once, reporting only the rules that matched; the
+lowest-numbered one wins. Only then does a `regex` rule run on its own, to expand its captures.
+Lookup time thus barely depends on the number of rules or on the position of the matching rule.
+
+Each thread doing lookups keeps its own DFA cache (up to 16 MiB, filled as states are built).
+A Unicode `\b` meeting non-ASCII text makes the DFA give up: that lookup falls back to the
+slower PikeVM.
 
 `just bench` (criterion) with 5 000 rules: 80% exact `example.com/page{i}.html`, 15% wildcard
 `example.com/dir{i}/*`, 5% regex `^example\.com/re{i}/(\w+)$`.
-The miss looks up `example.com/page9999.html`: a miss scans every rule, like a hit on the last one.
+The miss looks up `example.com/page9999.html`. Compared with the previous linear scan over the
+rules, on the same machine:
 
-| benchmark          | time     |
-| :----------------- | -------: |
-| `load/5000`        | 117 ms   |
-| `lookup/hit_first` | 127 ns   |
-| `lookup/hit_last`  | 109 µs   |
-| `lookup/miss`      | 111 µs   |
+| benchmark          | linear scan | lazy DFA |
+| :----------------- | ----------: | -------: |
+| `load/5000`        | 213 ms      | 154 ms   |
+| `lookup/hit_first` | 302 ns      | 197 ns   |
+| `lookup/hit_last`  | 236 µs      | 61 ns    |
+| `lookup/miss`      | 230 µs      | 41 ns    |
 
 ## Requirements
 

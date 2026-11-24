@@ -1,8 +1,9 @@
 use regex::Regex;
 use serde::Deserialize;
 
-use crate::url_rewrite_rules::glob::Glob;
-use crate::url_rewrite_rules::{Kind, LoadError, Matcher, Rule, RuleError, RuleErrorKind};
+use crate::url_rewrite_rules::glob;
+use crate::url_rewrite_rules::set::PatternMatcher;
+use crate::url_rewrite_rules::{Kind, LoadError, Rule, RuleError, RuleErrorKind};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, expecting = "a {type, match, output} object")]
@@ -14,12 +15,14 @@ struct RawRule {
     output: Option<String>,
 }
 
-pub(crate) fn load(text: &str) -> Result<Vec<Rule>, LoadError> {
+/// Parse and validate `text`, and compile every rule into one matcher, pattern `i` being rule `i`.
+pub(crate) fn load(text: &str) -> Result<(PatternMatcher, Vec<Rule>), LoadError> {
     // A null document (empty or comment-only file) is zero rules.
     // Each rule is deserialized on its own, so that all invalid rules are reported.
     let raw: Option<Vec<serde_norway::Value>> =
         serde_norway::from_str(text).map_err(|e| LoadError::Yaml(e.to_string()))?;
     let mut rules = Vec::new();
+    let mut patterns = Vec::new();
     let mut errors = Vec::new();
     for (i, v) in raw.unwrap_or_default().into_iter().enumerate() {
         let index = i + 1;
@@ -47,11 +50,12 @@ pub(crate) fn load(text: &str) -> Result<Vec<Rule>, LoadError> {
                 kind: RuleErrorKind::EmptyOutput,
             });
         }
-        let matcher = match r.kind {
-            Kind::Exact => Matcher::Exact(pattern),
-            Kind::Wildcard => Matcher::Wildcard(Glob::new(&pattern)),
+        let (set_pattern, regex) = match r.kind {
+            Kind::Exact => (glob::exact_to_regex(&pattern), None),
+            Kind::Wildcard => (glob::to_regex(&pattern), None),
+            // Compiled on its own too: to report errors per rule, and to get the captures.
             Kind::Regex => match Regex::new(&pattern) {
-                Ok(re) => Matcher::Regex(re),
+                Ok(re) => (pattern.clone(), Some(re)),
                 Err(e) => {
                     errors.push(RuleError {
                         index,
@@ -61,13 +65,19 @@ pub(crate) fn load(text: &str) -> Result<Vec<Rule>, LoadError> {
                 }
             },
         };
-        rules.push(Rule { matcher, output });
+        patterns.push(set_pattern);
+        rules.push(Rule {
+            kind: r.kind,
+            pattern,
+            output,
+            regex,
+        });
     }
-    if errors.is_empty() {
-        Ok(rules)
-    } else {
-        Err(LoadError::Rules(errors))
+    if !errors.is_empty() {
+        return Err(LoadError::Rules(errors));
     }
+    let matcher = PatternMatcher::new(&patterns).map_err(LoadError::Compile)?;
+    Ok((matcher, rules))
 }
 
 #[cfg(test)]

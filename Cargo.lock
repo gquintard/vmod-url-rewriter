@@ -881,6 +881,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "regex",
+ "regex-automata",
  "serde",
  "serde_norway",
  "varnish",
