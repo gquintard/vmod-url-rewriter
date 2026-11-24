@@ -1,0 +1,66 @@
+varnishtest "exact, wildcard and regex redirects, with their log records"
+
+shell {cat > ${tmpdir}/rules.yaml <<'EOF'
+- {type: exact, match: example.com/index.html, output: 'https://trololo.com/tralala.php'}
+- {type: wildcard, match: 'example.com/trolo/*', output: 'https://trololo.com'}
+- {type: regex, match: 'example\.com/index(fr|en)$', output: 'https://trololo.com/index$1'}
+EOF}
+
+server s1 {
+    rxreq
+    expect req.url == "/nope"
+    txresp
+} -start
+
+varnish v1 -vcl+backend {
+    import url_rewriter from "${vmod}";
+
+    sub vcl_init {
+        new rules = url_rewriter.rules("${tmpdir}/rules.yaml");
+    }
+
+    sub vcl_recv {
+        set req.http.x-redir = rules.lookup(req.http.host + req.url);
+        if (req.http.x-redir != "") {
+            return (synth(301));
+        }
+    }
+
+    sub vcl_synth {
+        if (resp.status == 301 && req.http.x-redir != "") {
+            set resp.http.location = req.http.x-redir;
+            return (deliver);
+        }
+    }
+} -start
+
+logexpect l1 -v v1 -d 1 -g raw {
+    expect * 0 VCL_Log {^rules: loaded 3 rules from .*/rules.yaml$}
+    expect * * VCL_Log {^rules: rule #1 \(exact "example.com/index.html"\) matched "example.com/index.html", output "https://trololo.com/tralala.php"$}
+    expect * * VCL_Log {^rules: rule #2 \(wildcard "example.com/trolo/\*"\) matched "example.com/trolo/a/b.html", output "https://trololo.com"$}
+    expect * * VCL_Log {^rules: rule #3 \(regex "example\\.com/index\(fr\|en\)\$"\) matched "example.com/indexen", output "https://trololo.com/indexen"$}
+    expect * * VCL_Log {^rules: no rule matched "example.com/nope"$}
+} -start
+
+client c1 {
+    txreq -url "/index.html" -hdr "host: example.com"
+    rxresp
+    expect resp.status == 301
+    expect resp.http.location == "https://trololo.com/tralala.php"
+
+    txreq -url "/trolo/a/b.html" -hdr "host: example.com"
+    rxresp
+    expect resp.status == 301
+    expect resp.http.location == "https://trololo.com"
+
+    txreq -url "/indexen" -hdr "host: example.com"
+    rxresp
+    expect resp.status == 301
+    expect resp.http.location == "https://trololo.com/indexen"
+
+    txreq -url "/nope" -hdr "host: example.com"
+    rxresp
+    expect resp.status == 200
+} -run
+
+logexpect l1 -wait
