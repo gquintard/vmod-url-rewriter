@@ -1,5 +1,5 @@
 [package]
-name = "redir-rules"
+name = "url-rewrite-rules"
 version = "0.1.0"
 description = "Ordered, first-match-wins exact/wildcard/regex string rewrite rules loaded from YAML"
 keywords = ["redirect", "rewrite", "glob", "regex", "yaml"]

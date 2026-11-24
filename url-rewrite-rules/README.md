@@ -1,9 +1,9 @@
-# redir-rules
+# url-rewrite-rules
 
 Ordered string rewrite rules (exact, wildcard, regex) loaded from YAML, where **the first matching rule wins**.
 
 ```rust
-use redir_rules::Rules;
+use url_rewrite_rules::Rules;
 
 let rules = Rules::from_yaml(r"
 - {type: exact, match: example.com/index.html, output: 'https://trololo.com/tralala.php'}
@@ -25,7 +25,7 @@ assert!(rules.lookup("example.com/other").is_none());
 - `from_yaml` validates every rule and reports all invalid ones at once (`LoadError`).
 - Lookups are a linear scan over the rules, in order.
 
-Used by [`vmod_redir`](../vmod_redir) to expose these rules to Varnish VCL.
+Used by [`vmod_url_rewriter`](../vmod_url_rewriter) to expose these rules to Varnish VCL.
 
 ## Benchmarks
 

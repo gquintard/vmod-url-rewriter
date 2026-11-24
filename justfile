@@ -1,6 +1,6 @@
 #!/usr/bin/env just --justfile
 
-main_crate := 'vmod_redir'
+main_crate := 'vmod_url_rewriter'
 packages := '--workspace'  # All crates in the workspace
 features := '--all-features'  # Enable all features
 targets := '--all-targets'  # For all targets (lib, bin, tests, examples, benches)
@@ -27,9 +27,9 @@ export RUST_BACKTRACE := env('RUST_BACKTRACE', if ci_mode == '1' {'1'} else {''}
 @_default:
     {{just_executable()}} --list
 
-# Run the redir-rules benchmarks, e.g. `just bench lookup/miss`
+# Run the url-rewrite-rules benchmarks, e.g. `just bench lookup/miss`
 bench *args:
-    cargo bench -p redir-rules --bench rules -- {{args}}
+    cargo bench -p url-rewrite-rules --bench rules -- {{args}}
 
 # Build the project with just the default and all features
 build:
@@ -106,7 +106,7 @@ get-varnish-version $required_version='':
 # Run all unit and integration tests. Builds first: the VTC tests load the vmod's .so file.
 test *args: build
     cargo test {{packages}} {{features}} {{targets}} {{args}}
-    cargo test -p redir-rules {{features}} --doc {{args}}
+    cargo test -p url-rewrite-rules {{features}} --doc {{args}}
 
 # Test documentation generation
 test-doc:  (docs '')

@@ -5,7 +5,7 @@
     clippy::self_named_constructors
 )]
 
-use redir_rules::Rules as RuleSet;
+use url_rewrite_rules::Rules as RuleSet;
 
 varnish::run_vtc_tests!("tests/*.vtc");
 
@@ -21,10 +21,10 @@ pub struct Rules {
 /// result (status code, `Location` header...).
 ///
 /// ```vcl
-/// import redir;
+/// import url_rewriter;
 ///
 /// sub vcl_init {
-///     new rules = redir.rules("/etc/varnish/redirects.yaml");
+///     new rules = url_rewriter.rules("/etc/varnish/redirects.yaml");
 /// }
 ///
 /// sub vcl_recv {
@@ -59,7 +59,7 @@ pub struct Rules {
 /// In a regex `output`, `$1foo` refers to a group named `1foo` (which expands to nothing), write
 /// `${1}foo` instead. `$$` is a literal `$`.
 #[varnish::vmod(docs = "API.md")]
-mod redir {
+mod url_rewriter {
     use varnish::vcl::{Ctx, LogTag, VclError};
 
     use super::{RuleSet, Rules};

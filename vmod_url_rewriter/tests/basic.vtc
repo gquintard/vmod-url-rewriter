@@ -13,10 +13,10 @@ server s1 {
 } -start
 
 varnish v1 -vcl+backend {
-    import redir from "${vmod}";
+    import url_rewriter from "${vmod}";
 
     sub vcl_init {
-        new rules = redir.rules("${tmpdir}/rules.yaml");
+        new rules = url_rewriter.rules("${tmpdir}/rules.yaml");
     }
 
     sub vcl_recv {

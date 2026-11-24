@@ -6,7 +6,7 @@ use std::fmt::Write;
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use redir_rules::Rules;
+use url_rewrite_rules::Rules;
 
 const N: usize = 5_000;
 

@@ -1,28 +1,28 @@
-# vmod_redir
+# vmod_url_rewriter
 
 This is a vmod for [varnish](http://varnish-cache.org/) to rewrite strings with thousands of ordered rules loaded from a YAML file, typically to send redirects. It is meant as a replacement for the unmaintained `vmod-redirect`.
 
 The vmod only manipulates text: a string goes in (usually `req.http.host + req.url`), the output of the first matching rule comes out. Status codes and headers are left to the VCL.
 
-The full VCL API is described in [API.md](vmod_redir/API.md).
+The full VCL API is described in [API.md](vmod_url_rewriter/API.md).
 
-The matching logic lives in its own crate, [`redir-rules`](redir-rules), so other Rust projects and vmods can use it too.
+The matching logic lives in its own crate, [`url-rewrite-rules`](url-rewrite-rules), so other Rust projects and vmods can use it too.
 
 Don't hesitate to open github issues if something is unclear or impractical. You can also join us on [discord](https://discord.com/invite/EuwdvbZR6d).
 
 ## Version matching
 
-| vmod-redir | varnish |
+| vmod-url-rewriter | varnish |
 | :--------- | :-----: |
 | 0.1.0      | 9.0, 9.1 |
 
 ## VCL Example
 
 ``` vcl
-import redir;
+import url_rewriter;
 
 sub vcl_init {
-	new rules = redir.rules("/etc/varnish/redirects.yaml");
+	new rules = url_rewriter.rules("/etc/varnish/redirects.yaml");
 }
 
 sub vcl_recv {
@@ -78,7 +78,7 @@ rules: no rule matched "example.com/other"
 
 ## Performance
 
-Lookups are a linear scan. With 5 000 rules, a miss (or a hit on the last rule) costs about 110 µs and loading about 120 ms, see [redir-rules](redir-rules/README.md) for details.
+Lookups are a linear scan. With 5 000 rules, a miss (or a hit on the last rule) costs about 110 µs and loading about 120 ms, see [url-rewrite-rules](url-rewrite-rules/README.md) for details.
 
 ## Requirements
 
@@ -98,4 +98,4 @@ cargo test --release
 
 Build before testing: the VTC tests load the `.so` file produced by `cargo build`.
 
-The vmod file will be found at `target/release/libvmod_redir.so`.
+The vmod file will be found at `target/release/libvmod_url_rewriter.so`.

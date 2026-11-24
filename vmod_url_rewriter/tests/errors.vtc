@@ -9,41 +9,41 @@ server s1 {} -start
 varnish v1 -vcl+backend {} -start
 
 varnish v1 -errvcl {r: cannot read} {
-    import redir from "${vmod}";
+    import url_rewriter from "${vmod}";
     backend be none;
     sub vcl_init {
-        new r = redir.rules("${tmpdir}/does_not_exist.yaml");
+        new r = url_rewriter.rules("${tmpdir}/does_not_exist.yaml");
     }
 }
 
 varnish v1 -errvcl {invalid YAML} {
-    import redir from "${vmod}";
+    import url_rewriter from "${vmod}";
     backend be none;
     sub vcl_init {
-        new r = redir.rules("${tmpdir}/bad_yaml.yaml");
+        new r = url_rewriter.rules("${tmpdir}/bad_yaml.yaml");
     }
 }
 
 varnish v1 -errvcl {rule #1: invalid regex} {
-    import redir from "${vmod}";
+    import url_rewriter from "${vmod}";
     backend be none;
     sub vcl_init {
-        new r = redir.rules("${tmpdir}/bad_regex.yaml");
+        new r = url_rewriter.rules("${tmpdir}/bad_regex.yaml");
     }
 }
 
 varnish v1 -errvcl {rule #1: empty match} {
-    import redir from "${vmod}";
+    import url_rewriter from "${vmod}";
     backend be none;
     sub vcl_init {
-        new r = redir.rules("${tmpdir}/empty_fields.yaml");
+        new r = url_rewriter.rules("${tmpdir}/empty_fields.yaml");
     }
 }
 
 varnish v1 -errvcl {rule #2: empty output} {
-    import redir from "${vmod}";
+    import url_rewriter from "${vmod}";
     backend be none;
     sub vcl_init {
-        new r = redir.rules("${tmpdir}/empty_fields.yaml");
+        new r = url_rewriter.rules("${tmpdir}/empty_fields.yaml");
     }
 }

@@ -1,12 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["redir-rules", "vmod_redir"]
+members = ["url-rewrite-rules", "vmod_url_rewriter"]
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.90.0"
 license = "BSD-3-Clause"
-repository = "https://github.com/varnish-rs/vmod-redir"
+repository = "https://github.com/gquintard/vmod-url-rewriter"
 authors = ["Guillaume Quintard <guillaume.quintard@gmail.com>"]
 
 [workspace.lints.rust]

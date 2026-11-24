@@ -6,7 +6,7 @@
    It will be automatically updated on each build.
 
 -->
-# Varnish Module (VMOD) `redir`
+# Varnish Module (VMOD) `url_rewriter`
 
 Rewrite strings with ordered exact, wildcard and regex rules, typically to send redirects.
 
@@ -14,10 +14,10 @@ The vmod only manipulates text: VCL decides what string to look up, and what to 
 result (status code, `Location` header...).
 
 ```vcl
-import redir;
+import url_rewriter;
 
 sub vcl_init {
-new rules = redir.rules("/etc/varnish/redirects.yaml");
+new rules = url_rewriter.rules("/etc/varnish/redirects.yaml");
 }
 
 sub vcl_recv {
@@ -55,15 +55,15 @@ In a regex `output`, `$1foo` refers to a group named `1foo` (which expands to no
 ```vcl
 // Place import statement at the top of your VCL file
 // This loads vmod from a standard location
-import redir;
+import url_rewriter;
 
 // Or load vmod from a specific file
-import redir from "path/to/libredir.so";
+import url_rewriter from "path/to/liburl_rewriter.so";
 ```
 
 ## Object `Rules`
 
-### Constructor `redir.rules(STRING path)`
+### Constructor `url_rewriter.rules(STRING path)`
 
 Load the rules from the YAML file at `path`, used as given: a relative path is
 resolved against varnishd's working directory.

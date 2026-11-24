@@ -6,11 +6,11 @@ shell {printf '# nothing yet\n' > ${tmpdir}/empty.yaml}
 server s1 {} -start
 
 varnish v1 -vcl+backend {
-    import redir from "${vmod}";
+    import url_rewriter from "${vmod}";
 
     sub vcl_init {
-        new rules = redir.rules("${tmpdir}/rules.yaml");
-        new empty = redir.rules("${tmpdir}/empty.yaml");
+        new rules = url_rewriter.rules("${tmpdir}/rules.yaml");
+        new empty = url_rewriter.rules("${tmpdir}/empty.yaml");
     }
 
     sub vcl_recv {

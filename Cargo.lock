@@ -608,16 +608,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "redir-rules"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "regex",
- "serde",
- "serde_norway",
-]
-
-[[package]]
 name = "regex"
 version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -841,6 +831,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39abd59bf32521c7f2301b52d05a6a2c975b6003521cbd0c6dc1582f0a22104"
 
 [[package]]
+name = "url-rewrite-rules"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "regex",
+ "serde",
+ "serde_norway",
+]
+
+[[package]]
 name = "varnish"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -886,10 +886,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "vmod_redir"
+name = "vmod_url_rewriter"
 version = "0.1.0"
 dependencies = [
- "redir-rules",
+ "url-rewrite-rules",
  "varnish",
 ]
 

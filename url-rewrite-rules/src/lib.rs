@@ -1,7 +1,7 @@
 //! Ordered, first-match-wins string rewrite rules (exact, wildcard, regex), loaded from YAML.
 //!
 //! ```
-//! use redir_rules::Rules;
+//! use url_rewrite_rules::Rules;
 //!
 //! let rules = Rules::from_yaml(
 //!     "- {type: exact, match: example.com/index.html, output: 'https://trololo.com/tralala.php'}",
