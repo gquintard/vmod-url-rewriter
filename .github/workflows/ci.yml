@@ -16,7 +16,8 @@ defaults:
 jobs:
   test:
     name: Test Varnish latest
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: 26.04 apt wants binary-amd64v3, which the Varnish repo lacks
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
       - if: github.event_name != 'release' && github.event_name != 'workflow_dispatch'
@@ -29,7 +30,7 @@ jobs:
 
   test-varnish-ver:
     name: Test Varnish ${{ matrix.ver }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: true
       matrix:
