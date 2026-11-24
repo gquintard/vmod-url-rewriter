@@ -85,21 +85,27 @@ overlapping search runs over the string once, reporting only the rules that matc
 lowest-numbered one wins. Only then does a `regex` rule run on its own, to expand its captures.
 Lookup time thus barely depends on the number of rules or on the position of the matching rule.
 
-Each thread doing lookups keeps its own DFA cache (up to 16 MiB, filled as states are built).
-A Unicode `\b` meeting non-ASCII text makes the DFA give up: that lookup falls back to the
-slower PikeVM.
+Each concurrent lookup keeps its own DFA cache, filled as states are built, up to 16 MiB or the
+lazy DFA's minimum if bigger: thousands of `regex` rules using Unicode classes such as `\w` raise
+that minimum (~105 MiB per cache with 20 000 such rules). A Unicode `\b` meeting non-ASCII text
+makes the DFA give up: that lookup falls back to the slower PikeVM.
+
+Memory mostly goes to `regex` rules, each compiled a second time on its own for its captures
+(without a one-pass DFA, which costs ~670 KiB per rule with `\w`). With
+`^example\.com/re{i}/(\w+)$` rules only, the RSS after load is ~110 KiB per rule (2.2 GiB for
+20 000 rules, loaded in 14 s); `(?-u:\w)` or `[a-z]` instead of `\w` is far cheaper.
 
 `just bench` (criterion) with 5 000 rules: 80% exact `example.com/page{i}.html`, 15% wildcard
 `example.com/dir{i}/*`, 5% regex `^example\.com/re{i}/(\w+)$`.
 The miss looks up `example.com/page9999.html`. Compared with the previous linear scan over the
-rules, on the same machine:
+rules (lazy DFA numbers measured on a busier machine):
 
 | benchmark          | linear scan | lazy DFA |
 | :----------------- | ----------: | -------: |
-| `load/5000`        | 213 ms      | 154 ms   |
-| `lookup/hit_first` | 302 ns      | 197 ns   |
-| `lookup/hit_last`  | 236 µs      | 61 ns    |
-| `lookup/miss`      | 230 µs      | 41 ns    |
+| `load/5000`        | 213 ms      | 210 ms   |
+| `lookup/hit_first` | 302 ns      | 479 ns   |
+| `lookup/hit_last`  | 236 µs      | 104 ns   |
+| `lookup/miss`      | 230 µs      | 109 ns   |
 
 ## Requirements
 

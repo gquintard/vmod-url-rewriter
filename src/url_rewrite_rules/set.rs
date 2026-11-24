@@ -13,7 +13,8 @@ use regex_automata::{Input, MatchError, MatchKind, PatternSet};
 
 // Thousands of rules need far more than the default NFA size limit (10 MiB).
 const NFA_SIZE_LIMIT: usize = 1 << 30;
-// Per thread doing lookups; allocated lazily as DFA states get built.
+// Per concurrent lookup, filled as DFA states get built. Raised to the lazy DFA's (worst-case)
+// minimum when that is bigger, which happens with thousands of Unicode-heavy patterns.
 const DFA_CACHE_CAPACITY: usize = 16 << 20;
 
 type CacheFn<T> = Box<dyn Fn() -> T + Send + Sync>;
@@ -50,6 +51,7 @@ impl PatternMatcher {
                 DFA::config()
                     .match_kind(MatchKind::All)
                     .cache_capacity(DFA_CACHE_CAPACITY)
+                    .skip_cache_capacity_check(true)
                     .unicode_word_boundary(true),
             )
             .build_from_nfa(nfa.clone())
@@ -110,6 +112,14 @@ mod tests {
         assert_eq!(m.first("xbx"), Some(2));
         assert_eq!(m.first("zzz"), Some(0));
         assert_eq!(m.first("x"), None);
+    }
+
+    #[test]
+    fn many_unicode_patterns_build() {
+        let patterns: Vec<String> = (0..2000).map(|i| format!(r"^/re{i}/(\w+)$")).collect();
+        let m = PatternMatcher::new(&patterns).unwrap();
+        assert_eq!(m.first("/re1999/é"), Some(1999));
+        assert_eq!(m.first("/re2000/x"), None);
     }
 
     #[test]

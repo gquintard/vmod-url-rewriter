@@ -1,4 +1,4 @@
-//! Turn `exact` and `wildcard` patterns into anchored regexes for the rule [`regex::RegexSet`].
+//! Turn `exact` and `wildcard` patterns into anchored regexes for the rule matcher.
 
 /// A regex matching exactly `pattern`, every character taken literally.
 pub(crate) fn exact_to_regex(pattern: &str) -> String {

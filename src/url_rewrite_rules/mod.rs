@@ -47,7 +47,7 @@ pub(crate) struct Rule {
     pub pattern: String,
     pub output: String,
     /// The compiled pattern of a `regex` rule, to expand its captures into `output`.
-    pub regex: Option<regex::Regex>,
+    pub regex: Option<regex_automata::meta::Regex>,
 }
 
 /// The rule that matched a lookup, and what it produced.
@@ -93,9 +93,13 @@ impl Rules {
         let rule = &self.rules[i];
         let output = match &rule.regex {
             Some(re) => {
-                let caps = re.captures(s)?;
+                let mut caps = re.create_captures();
+                re.captures(s, &mut caps);
+                if !caps.is_match() {
+                    return None;
+                }
                 let mut expanded = String::new();
-                caps.expand(&rule.output, &mut expanded);
+                caps.interpolate_string_into(s, &rule.output, &mut expanded);
                 Cow::Owned(expanded)
             }
             None => Cow::Borrowed(rule.output.as_str()),

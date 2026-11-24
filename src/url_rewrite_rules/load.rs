@@ -1,4 +1,4 @@
-use regex::Regex;
+use regex_automata::meta;
 use serde::Deserialize;
 
 use crate::url_rewrite_rules::glob;
@@ -13,6 +13,20 @@ struct RawRule {
     #[serde(rename = "match")]
     pattern: Option<String>,
     output: Option<String>,
+}
+
+/// The regex a `regex` rule runs on its own, to get its captures once it matched.
+///
+/// Built without the one-pass DFA that [`regex::Regex`] would add for capture groups: with a
+/// Unicode class such as `\w`, that table alone is ~670 KiB per rule.
+fn capture_regex(pattern: &str) -> Result<meta::Regex, String> {
+    meta::Regex::builder()
+        .configure(meta::Config::new().onepass(false))
+        .build(pattern)
+        .map_err(|e| {
+            e.syntax_error()
+                .map_or_else(|| e.to_string(), ToString::to_string)
+        })
 }
 
 /// Parse and validate `text`, and compile every rule into one matcher, pattern `i` being rule `i`.
@@ -54,12 +68,12 @@ pub(crate) fn load(text: &str) -> Result<(PatternMatcher, Vec<Rule>), LoadError>
             Kind::Exact => (glob::exact_to_regex(&pattern), None),
             Kind::Wildcard => (glob::to_regex(&pattern), None),
             // Compiled on its own too: to report errors per rule, and to get the captures.
-            Kind::Regex => match Regex::new(&pattern) {
+            Kind::Regex => match capture_regex(&pattern) {
                 Ok(re) => (pattern.clone(), Some(re)),
                 Err(e) => {
                     errors.push(RuleError {
                         index,
-                        kind: RuleErrorKind::InvalidRegex(e.to_string()),
+                        kind: RuleErrorKind::InvalidRegex(e),
                     });
                     continue;
                 }
