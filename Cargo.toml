@@ -14,13 +14,14 @@ authors = ["Guillaume Quintard <guillaume.quintard@gmail.com>"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-regex = "1"
 regex-automata = "0.4"
+regex-syntax = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_norway = "0.9"
 varnish = "0.8"
 
 [dev-dependencies]
+regex = "1"
 criterion = "0.8"
 
 [[bench]]

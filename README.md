@@ -63,8 +63,8 @@ The rules file is a YAML list of `{type, match, output}` objects:
 
 - Rules are tried **in file order, the first matching rule wins**. Rules hidden by earlier ones are not detected: check the log to see which rule actually matched.
 - A wildcard rule drops what the `*` matched: `example.com/trolo/a/b.html` gives `https://trololo.com`. A lone `*` matches everything.
-- Regexes use the [`regex`](https://docs.rs/regex) syntax. In `output`, `$1foo` refers to a group named `1foo` (which expands to nothing): write `${1}foo` instead. `$$` is a literal `$`.
-- An invalid file fails the VCL load, with every invalid rule listed: unknown `type` or keys, missing or empty `match`/`output`, invalid regex. An empty file is valid and holds no rules.
+- Regexes use the [`regex`](https://docs.rs/regex) syntax, except that `\w`, `\d`, `\s` and `\b` are ASCII-only, even under `(?u)` (`.` and literals stay Unicode): use `\p{..}` classes, e.g. `\p{L}`, to match non-ASCII letters or digits. In `output`, `$1foo` refers to a group named `1foo` (which expands to nothing): write `${1}foo` instead. `$$` is a literal `$`.
+- An invalid file fails the VCL load, with every invalid rule listed: unknown `type` or keys, missing or empty `match`/`output`, invalid regex, regex too complex to precompute (see [Performance](#performance)). An empty file is valid and holds no rules.
 
 ## Logging
 
@@ -80,32 +80,38 @@ rules: no rule matched "example.com/other"
 
 At load time, every rule becomes one regex: `exact` is escaped and anchored, `wildcard` is
 escaped with each `*` turned into `(?s:.*)` and anchored, `regex` is used as-is. All of them are
-compiled into one lazy DFA ([`regex-automata`](https://docs.rs/regex-automata)), which an
-overlapping search runs over the string once, reporting only the rules that matched; the
-lowest-numbered one wins. Only then does a `regex` rule run on its own, to expand its captures.
-Lookup time thus barely depends on the number of rules or on the position of the matching rule.
+compiled into one DFA ([`regex-automata`](https://docs.rs/regex-automata)), which an overlapping
+search runs over the string once, reporting only the rules that matched; the lowest-numbered one
+wins. Only then does a `regex` rule run on its own, to expand its captures. Lookup time thus
+barely depends on the number of rules or on the position of the matching rule.
 
-Each concurrent lookup keeps its own DFA cache, filled as states are built, up to 16 MiB or the
-lazy DFA's minimum if bigger: thousands of `regex` rules using Unicode classes such as `\w` raise
-that minimum (~105 MiB per cache with 20 000 such rules). A Unicode `\b` meeting non-ASCII text
-makes the DFA give up: that lookup falls back to the slower PikeVM.
+The DFA is fully built at load time and shared read-only: lookups keep no per-thread state, so
+memory doesn't grow with the number of Varnish threads. A `regex` rule hit allocates a little
+scratch space for its captures. The DFA stays dense (fastest) up to 128 MiB, beyond that it is
+converted to a sparse DFA, typically 10x smaller for a 3x slower search. Building it may use up to
+1 GiB: a file needing more fails to load, naming the `regex` rules too complex on their own, if
+any. Unicode classes are what make DFAs big, which is why `\w`, `\d`, `\s` and `\b` are
+ASCII-only; large `\p{..}` classes or bounded repetitions (`(a|b)*a(a|b){30}`) can still blow up.
 
-Memory mostly goes to `regex` rules, each compiled a second time on its own for its captures
-(without a one-pass DFA, which costs ~670 KiB per rule with `\w`). With
-`^example\.com/re{i}/(\w+)$` rules only, the RSS after load is ~110 KiB per rule (2.2 GiB for
-20 000 rules, loaded in 14 s); `(?-u:\w)` or `[a-z]` instead of `\w` is far cheaper.
+With `^example\.com/re{i}/(\w+)$` rules only, measured with a release build:
+
+| rules   | load   | RSS after load | `regex` hit | miss  |
+| ------: | -----: | -------------: | ----------: | ----: |
+| 1 000   | 23 ms  | 9 MiB          | 220 ns      | 23 ns |
+| 20 000  | 0.5 s  | 134 MiB        | 350 ns      | 25 ns |
+| 100 000 | 2.8 s  | 465 MiB        | 450 ns      | 29 ns |
 
 `just bench` (criterion) with 5 000 rules: 80% exact `example.com/page{i}.html`, 15% wildcard
 `example.com/dir{i}/*`, 5% regex `^example\.com/re{i}/(\w+)$`.
 The miss looks up `example.com/page9999.html`. Compared with the previous linear scan over the
-rules (lazy DFA numbers measured on a busier machine):
+rules (measured earlier, on a busier machine):
 
-| benchmark          | linear scan | lazy DFA |
-| :----------------- | ----------: | -------: |
-| `load/5000`        | 213 ms      | 210 ms   |
-| `lookup/hit_first` | 302 ns      | 479 ns   |
-| `lookup/hit_last`  | 236 µs      | 104 ns   |
-| `lookup/miss`      | 230 µs      | 109 ns   |
+| benchmark          | linear scan | DFA    |
+| :----------------- | ----------: | -----: |
+| `load/5000`        | 213 ms      | 168 ms |
+| `lookup/hit_first` | 302 ns      | 235 ns |
+| `lookup/hit_last`  | 236 µs      | 44 ns  |
+| `lookup/miss`      | 230 µs      | 28 ns  |
 
 ## Requirements
 

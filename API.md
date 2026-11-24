@@ -50,7 +50,9 @@ output: https://trololo.com/index$1
 ```
 
 In a regex `output`, `$1foo` refers to a group named `1foo` (which expands to nothing), write
-`${1}foo` instead. `$$` is a literal `$`.
+`${1}foo` instead. `$$` is a literal `$`. In regexes, `\w`, `\d`, `\s` and `\b` are
+ASCII-only (`.` and literals stay Unicode): use `\p{..}` classes to match non-ASCII letters or
+digits.
 
 ```vcl
 // Place import statement at the top of your VCL file

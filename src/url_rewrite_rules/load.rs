@@ -1,9 +1,12 @@
-use regex_automata::meta;
+use regex_syntax::hir::Hir;
 use serde::Deserialize;
 
-use crate::url_rewrite_rules::glob;
+use crate::url_rewrite_rules::captures::Expander;
 use crate::url_rewrite_rules::set::PatternMatcher;
-use crate::url_rewrite_rules::{Kind, LoadError, Rule, RuleError, RuleErrorKind};
+use crate::url_rewrite_rules::{Kind, LoadError, Rule, RuleError, RuleErrorKind, glob, syntax};
+
+/// Most memory that building the DFA of all rules may use (the result is much smaller).
+const DFA_SIZE_LIMIT: usize = 1 << 30;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, expecting = "a {type, match, output} object")]
@@ -15,28 +18,21 @@ struct RawRule {
     output: Option<String>,
 }
 
-/// The regex a `regex` rule runs on its own, to get its captures once it matched.
-///
-/// Built without the one-pass DFA that [`regex::Regex`] would add for capture groups: with a
-/// Unicode class such as `\w`, that table alone is ~670 KiB per rule.
-fn capture_regex(pattern: &str) -> Result<meta::Regex, String> {
-    meta::Regex::builder()
-        .configure(meta::Config::new().onepass(false))
-        .build(pattern)
-        .map_err(|e| {
-            e.syntax_error()
-                .map_or_else(|| e.to_string(), ToString::to_string)
-        })
-}
-
 /// Parse and validate `text`, and compile every rule into one matcher, pattern `i` being rule `i`.
 pub(crate) fn load(text: &str) -> Result<(PatternMatcher, Vec<Rule>), LoadError> {
+    load_with_limit(text, DFA_SIZE_LIMIT)
+}
+
+fn load_with_limit(
+    text: &str,
+    size_limit: usize,
+) -> Result<(PatternMatcher, Vec<Rule>), LoadError> {
     // A null document (empty or comment-only file) is zero rules.
     // Each rule is deserialized on its own, so that all invalid rules are reported.
     let raw: Option<Vec<serde_norway::Value>> =
         serde_norway::from_str(text).map_err(|e| LoadError::Yaml(e.to_string()))?;
     let mut rules = Vec::new();
-    let mut patterns = Vec::new();
+    let mut hirs = Vec::new();
     let mut errors = Vec::new();
     for (i, v) in raw.unwrap_or_default().into_iter().enumerate() {
         let index = i + 1;
@@ -64,12 +60,24 @@ pub(crate) fn load(text: &str) -> Result<(PatternMatcher, Vec<Rule>), LoadError>
                 kind: RuleErrorKind::EmptyOutput,
             });
         }
-        let (set_pattern, regex) = match r.kind {
-            Kind::Exact => (glob::exact_to_regex(&pattern), None),
-            Kind::Wildcard => (glob::to_regex(&pattern), None),
-            // Compiled on its own too: to report errors per rule, and to get the captures.
-            Kind::Regex => match capture_regex(&pattern) {
-                Ok(re) => (pattern.clone(), Some(re)),
+        let parsed = match r.kind {
+            Kind::Exact => syntax::parse(&glob::exact_to_regex(&pattern)),
+            Kind::Wildcard => syntax::parse(&glob::to_regex(&pattern)),
+            Kind::Regex => syntax::parse(&pattern),
+        };
+        let hir = match parsed {
+            Ok(hir) => hir,
+            Err(e) => {
+                errors.push(RuleError {
+                    index,
+                    kind: RuleErrorKind::InvalidRegex(e),
+                });
+                continue;
+            }
+        };
+        let captures = match r.kind {
+            Kind::Regex => match Expander::new(&hir) {
+                Ok(e) => Some(e),
                 Err(e) => {
                     errors.push(RuleError {
                         index,
@@ -78,20 +86,41 @@ pub(crate) fn load(text: &str) -> Result<(PatternMatcher, Vec<Rule>), LoadError>
                     continue;
                 }
             },
+            Kind::Exact | Kind::Wildcard => None,
         };
-        patterns.push(set_pattern);
+        hirs.push(hir);
         rules.push(Rule {
             kind: r.kind,
             pattern,
             output,
-            regex,
+            captures,
         });
     }
     if !errors.is_empty() {
         return Err(LoadError::Rules(errors));
     }
-    let matcher = PatternMatcher::new(&patterns).map_err(LoadError::Compile)?;
-    Ok((matcher, rules))
+    match PatternMatcher::new(&hirs, size_limit) {
+        Ok(matcher) => Ok((matcher, rules)),
+        Err(e) => Err(too_complex(&rules, &hirs, size_limit).unwrap_or(LoadError::Compile(e))),
+    }
+}
+
+/// The `regex` rules that can't be compiled even alone, if any.
+fn too_complex(rules: &[Rule], hirs: &[Hir], size_limit: usize) -> Option<LoadError> {
+    let errors: Vec<RuleError> = rules
+        .iter()
+        .zip(hirs)
+        .enumerate()
+        .filter(|(_, (rule, hir))| {
+            rule.kind == Kind::Regex
+                && PatternMatcher::new(std::slice::from_ref(*hir), size_limit).is_err()
+        })
+        .map(|(i, _)| RuleError {
+            index: i + 1,
+            kind: RuleErrorKind::TooComplex,
+        })
+        .collect();
+    (!errors.is_empty()).then_some(LoadError::Rules(errors))
 }
 
 #[cfg(test)]
@@ -201,6 +230,23 @@ mod tests {
                 "{t}"
             );
         }
+    }
+
+    #[test]
+    fn too_complex_regex_is_rule_error() {
+        let text = "- {type: exact, match: a, output: o}\n- {type: regex, match: '(a|b)*a(a|b){16}', output: o}\n- {type: regex, match: 'x', output: o}\n";
+        let Err(LoadError::Rules(v)) = super::load_with_limit(text, 1 << 20) else {
+            panic!("expected rule errors")
+        };
+        assert_eq!(
+            v,
+            [RuleError {
+                index: 2,
+                kind: RuleErrorKind::TooComplex
+            }]
+        );
+        assert_eq!(v[0].to_string(), "rule #2: regex too complex to precompute");
+        assert!(super::load_with_limit(text, 1 << 30).is_ok());
     }
 
     #[test]

@@ -17,9 +17,11 @@ use std::fmt;
 
 use serde::Deserialize;
 
+mod captures;
 mod glob;
 mod load;
 mod set;
+mod syntax;
 
 /// The kind of a rule, as written in the `type` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -46,8 +48,8 @@ pub(crate) struct Rule {
     /// The `match` field, as written.
     pub pattern: String,
     pub output: String,
-    /// The compiled pattern of a `regex` rule, to expand its captures into `output`.
-    pub regex: Option<regex_automata::meta::Regex>,
+    /// For a `regex` rule, expands its captures into `output`.
+    pub captures: Option<captures::Expander>,
 }
 
 /// The rule that matched a lookup, and what it produced.
@@ -64,8 +66,8 @@ pub struct Match<'a> {
 
 /// An ordered list of rules, where the first matching rule wins.
 ///
-/// All rules are compiled into one automaton, so a lookup scans `s` once whatever the number of
-/// rules.
+/// All rules are compiled at load time into one DFA, so a lookup scans `s` once whatever the
+/// number of rules.
 #[derive(Debug)]
 pub struct Rules {
     /// Pattern `i` is `rules[i]`.
@@ -91,17 +93,8 @@ impl Rules {
     pub fn lookup<'a>(&'a self, s: &str) -> Option<Match<'a>> {
         let i = self.set.first(s)?;
         let rule = &self.rules[i];
-        let output = match &rule.regex {
-            Some(re) => {
-                let mut caps = re.create_captures();
-                re.captures(s, &mut caps);
-                if !caps.is_match() {
-                    return None;
-                }
-                let mut expanded = String::new();
-                caps.interpolate_string_into(s, &rule.output, &mut expanded);
-                Cow::Owned(expanded)
-            }
+        let output = match &rule.captures {
+            Some(expander) => Cow::Owned(expander.expand(s, &rule.output)?),
             None => Cow::Borrowed(rule.output.as_str()),
         };
         Some(Match {
@@ -132,7 +125,7 @@ pub enum LoadError {
     Yaml(String),
     /// Some rules are invalid.
     Rules(Vec<RuleError>),
-    /// The rules are valid one by one, but too big to compile together.
+    /// The rules are valid one by one, but their DFA is too big to precompute.
     Compile(String),
 }
 
@@ -178,6 +171,8 @@ pub enum RuleErrorKind {
     /// `output` is missing, null or empty.
     EmptyOutput,
     InvalidRegex(String),
+    /// A `regex` whose DFA is too big to precompute, such as `(a|b)*a(a|b){30}`.
+    TooComplex,
     /// Not a `{type, match, output}` object: unknown `type` or key, wrong value type...
     Invalid(String),
 }
@@ -188,6 +183,7 @@ impl fmt::Display for RuleErrorKind {
             RuleErrorKind::EmptyMatch => f.write_str("empty match"),
             RuleErrorKind::EmptyOutput => f.write_str("empty output"),
             RuleErrorKind::InvalidRegex(e) => write!(f, "invalid regex: {e}"),
+            RuleErrorKind::TooComplex => f.write_str("regex too complex to precompute"),
             RuleErrorKind::Invalid(e) => write!(f, "invalid rule: {e}"),
         }
     }
@@ -306,6 +302,39 @@ mod tests {
         assert_eq!(out(&r, "X").as_deref(), Some("one"));
         assert_eq!(r.lookup("abc"), None);
         assert_eq!(out(&r, "ABC").as_deref(), Some("two"));
+    }
+
+    #[test]
+    fn perl_classes_and_word_boundaries_are_ascii() {
+        let r = Rules::from_yaml(
+            r"- {type: regex, match: '^/w/(\w+)$', output: '$1'}
+- {type: regex, match: '^/d/\d$', output: d}
+- {type: regex, match: '^/s/\s$', output: s}
+- {type: regex, match: '^/b/x\b', output: b}
+- {type: regex, match: '^/c/([\w-]+)$', output: '$1'}
+- {type: regex, match: '^/n/(\W)([^\w])$', output: '$1$2'}
+- {type: regex, match: '^/u/(?u:\w)$', output: u}
+- {type: regex, match: '^/p/(\p{L}+)$', output: '$1'}",
+        )
+        .unwrap();
+        assert_eq!(out(&r, "/w/abc_9").as_deref(), Some("abc_9"));
+        assert_eq!(r.lookup("/w/é"), None);
+        assert_eq!(r.lookup("/d/٣"), None);
+        assert_eq!(r.lookup("/s/\u{a0}"), None);
+        assert_eq!(out(&r, "/b/x-").as_deref(), Some("b"));
+        assert_eq!(out(&r, "/b/xé").as_deref(), Some("b"));
+        assert_eq!(r.lookup("/b/xy"), None);
+        assert_eq!(out(&r, "/c/a-b").as_deref(), Some("a-b"));
+        assert_eq!(r.lookup("/c/é"), None);
+        assert_eq!(out(&r, "/n/éü").as_deref(), Some("éü"));
+        assert_eq!(r.lookup("/u/é"), None);
+        assert_eq!(out(&r, "/p/éü").as_deref(), Some("éü"));
+    }
+
+    #[test]
+    fn dot_and_literals_stay_unicode() {
+        let r = Rules::from_yaml(r"- {type: regex, match: '^/é(.)$', output: '$1'}").unwrap();
+        assert_eq!(out(&r, "/éü").as_deref(), Some("ü"));
     }
 
     #[test]

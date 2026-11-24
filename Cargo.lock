@@ -882,6 +882,7 @@ dependencies = [
  "criterion",
  "regex",
  "regex-automata",
+ "regex-syntax",
  "serde",
  "serde_norway",
  "varnish",

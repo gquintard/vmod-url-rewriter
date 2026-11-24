@@ -2,13 +2,13 @@
 
 /// A regex matching exactly `pattern`, every character taken literally.
 pub(crate) fn exact_to_regex(pattern: &str) -> String {
-    format!(r"\A{}\z", regex::escape(pattern))
+    format!(r"\A{}\z", regex_syntax::escape(pattern))
 }
 
 /// A regex matching the whole string against `pattern`, where each `*` matches any run of
 /// characters (newlines included), possibly empty, and everything else is literal.
 pub(crate) fn to_regex(pattern: &str) -> String {
-    let pieces: Vec<String> = pattern.split('*').map(regex::escape).collect();
+    let pieces: Vec<String> = pattern.split('*').map(regex_syntax::escape).collect();
     format!(r"\A{}\z", pieces.join("(?s:.*)"))
 }
 
