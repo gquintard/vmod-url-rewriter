@@ -50,7 +50,9 @@ output: https://trololo.com/index$1
 ```
 
 In a regex `output`, `$1foo` refers to a group named `1foo` (which expands to nothing), write
-`${1}foo` instead. `$$` is a literal `$`.
+`${1}foo` instead. `$$` is a literal `$`. In regexes, `\w`, `\d`, `\s` and `\b` are
+ASCII-only (`.` and literals stay Unicode): use `\p{..}` classes to match non-ASCII letters or
+digits.
 
 ```vcl
 // Place import statement at the top of your VCL file
@@ -63,7 +65,7 @@ import url_rewriter from "path/to/liburl_rewriter.so";
 
 ## Object `Rules`
 
-### Constructor `url_rewriter.rules(STRING path)`
+### Constructor `url_rewriter.rules(STRING path, INT max_build_mb = 1024)`
 
 Load the rules from the YAML file at `path`, used as given: a relative path is
 resolved against varnishd's working directory.
@@ -71,6 +73,10 @@ resolved against varnishd's working directory.
 The file is read once, when the VCL loads. An unreadable file, invalid YAML, or any
 invalid rule (unknown type, missing or empty field, invalid regex) fails the VCL
 load, listing every invalid rule.
+
+All rules are compiled into one DFA at load time, which may use up to
+`max_build_mb` MiB of memory (the result is much smaller): rules needing more fail
+the load, those too complex on their own being listed.
 
 ### Method `STRING <object>.lookup(STRING s)`
 

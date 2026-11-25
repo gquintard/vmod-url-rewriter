@@ -59,7 +59,9 @@ pub struct Rules {
 /// ```
 ///
 /// In a regex `output`, `$1foo` refers to a group named `1foo` (which expands to nothing), write
-/// `${1}foo` instead. `$$` is a literal `$`.
+/// `${1}foo` instead. `$$` is a literal `$`. In regexes, `\w`, `\d`, `\s` and `\b` are
+/// ASCII-only (`.` and literals stay Unicode): use `\p{..}` classes to match non-ASCII letters or
+/// digits.
 #[varnish::vmod(docs = "API.md")]
 mod url_rewriter {
     use varnish::vcl::{Ctx, LogTag, VclError};
@@ -73,10 +75,28 @@ mod url_rewriter {
         /// The file is read once, when the VCL loads. An unreadable file, invalid YAML, or any
         /// invalid rule (unknown type, missing or empty field, invalid regex) fails the VCL
         /// load, listing every invalid rule.
-        pub fn rules(ctx: &mut Ctx, #[vcl_name] name: &str, path: &str) -> Result<Self, VclError> {
+        ///
+        /// All rules are compiled into one DFA at load time, which may use up to
+        /// `max_build_mb` MiB of memory (the result is much smaller): rules needing more fail
+        /// the load, those too complex on their own being listed.
+        pub fn rules(
+            ctx: &mut Ctx,
+            #[vcl_name] name: &str,
+            path: &str,
+            #[default(1024)] max_build_mb: i64,
+        ) -> Result<Self, VclError> {
+            let build_limit = usize::try_from(max_build_mb)
+                .ok()
+                .filter(|&mb| mb > 0)
+                .and_then(|mb| mb.checked_mul(1 << 20))
+                .ok_or_else(|| {
+                    VclError::new(format!(
+                        "{name}: max_build_mb must be positive, not {max_build_mb}"
+                    ))
+                })?;
             let text = std::fs::read_to_string(path)
                 .map_err(|e| VclError::new(format!("{name}: cannot read {path}: {e}")))?;
-            let rules = RuleSet::from_yaml(&text)
+            let rules = RuleSet::from_yaml_with_limit(&text, build_limit)
                 .map_err(|e| VclError::new(format!("{name}: {path}: {e}")))?;
             ctx.log(
                 LogTag::VclLog,

@@ -1,92 +1,92 @@
-/// A glob pattern where each `*` matches any run of characters, including none.
-#[derive(Debug)]
-pub(crate) struct Glob {
-    pattern: String,
+//! Turn `exact` and `wildcard` patterns into anchored regexes for the rule matcher.
+
+/// A regex matching exactly `pattern`, every character taken literally.
+pub(crate) fn exact_to_regex(pattern: &str) -> String {
+    format!(r"\A{}\z", regex_syntax::escape(pattern))
 }
 
-impl Glob {
-    pub fn new(pattern: &str) -> Glob {
-        Glob {
-            pattern: pattern.to_owned(),
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.pattern
-    }
-
-    pub fn is_match(&self, s: &str) -> bool {
-        let mut pieces = self.pattern.split('*');
-        // `split` always yields at least one piece.
-        let first = pieces.next().unwrap_or_default();
-        let Some(last) = pieces.next_back() else {
-            return s == first;
-        };
-        if first.len() + last.len() > s.len() {
-            return false;
-        }
-        let Some(mut rest) = s.strip_prefix(first).and_then(|r| r.strip_suffix(last)) else {
-            return false;
-        };
-        // Leftmost-first is enough: with only `*`, an earlier piece position never hurts later ones.
-        for piece in pieces {
-            match rest.find(piece) {
-                Some(pos) => rest = &rest[pos + piece.len()..],
-                None => return false,
-            }
-        }
-        true
-    }
+/// A regex matching the whole string against `pattern`, where each `*` matches any run of
+/// characters (newlines included), possibly empty, and everything else is literal.
+pub(crate) fn to_regex(pattern: &str) -> String {
+    let pieces: Vec<String> = pattern.split('*').map(regex_syntax::escape).collect();
+    format!(r"\A{}\z", pieces.join("(?s:.*)"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Glob;
+    use regex::Regex;
+
+    use super::{exact_to_regex, to_regex};
+
+    fn m(p: &str, s: &str) -> bool {
+        Regex::new(&to_regex(p)).unwrap().is_match(s)
+    }
 
     #[test]
     fn wildcard_trailing() {
-        let g = Glob::new("example.com/trolo/*");
-        assert!(g.is_match("example.com/trolo/"));
-        assert!(g.is_match("example.com/trolo/a/b.html"));
-        assert!(!g.is_match("example.com/trolo"));
-        assert!(!g.is_match("xexample.com/trolo/"));
+        let p = "example.com/trolo/*";
+        assert!(m(p, "example.com/trolo/"));
+        assert!(m(p, "example.com/trolo/a/b.html"));
+        assert!(!m(p, "example.com/trolo"));
+        assert!(!m(p, "xexample.com/trolo/"));
     }
 
     #[test]
     fn wildcard_anywhere() {
-        let g = Glob::new("*.example.com/old/*");
-        assert!(g.is_match("www.example.com/old/x"));
-        assert!(g.is_match(".example.com/old/"));
-        assert!(!g.is_match("example.com/old/x"));
-        let g = Glob::new("a*b*c");
-        assert!(g.is_match("abc"));
-        assert!(g.is_match("aXbYbZc"));
-        assert!(!g.is_match("abcX"));
-        assert!(!g.is_match("ac"));
-        let g = Glob::new("ab*ba");
-        assert!(!g.is_match("aba"));
-        assert!(g.is_match("abba"));
+        let p = "*.example.com/old/*";
+        assert!(m(p, "www.example.com/old/x"));
+        assert!(m(p, ".example.com/old/"));
+        assert!(!m(p, "example.com/old/x"));
+        assert!(m("a*b*c", "abc"));
+        assert!(m("a*b*c", "aXbYbZc"));
+        assert!(!m("a*b*c", "abcX"));
+        assert!(!m("a*b*c", "ac"));
+        assert!(!m("ab*ba", "aba"));
+        assert!(m("ab*ba", "abba"));
     }
 
     #[test]
     fn wildcard_stars_only() {
         for p in ["*", "**"] {
-            assert!(Glob::new(p).is_match(""));
-            assert!(Glob::new(p).is_match("anything"));
+            assert!(m(p, ""));
+            assert!(m(p, "anything"));
         }
     }
 
     #[test]
     fn wildcard_no_star_is_equality() {
-        assert!(Glob::new("a/b").is_match("a/b"));
-        assert!(!Glob::new("a/b").is_match("a/bc"));
+        assert!(m("a/b", "a/b"));
+        assert!(!m("a/b", "a/bc"));
     }
 
     #[test]
     fn wildcard_utf8() {
-        let g = Glob::new("example.com/é*/ü");
-        assert!(g.is_match("example.com/é/ü"));
-        assert!(g.is_match("example.com/éàà/ü"));
-        assert!(!g.is_match("example.com/e/ü"));
+        let p = "example.com/é*/ü";
+        assert!(m(p, "example.com/é/ü"));
+        assert!(m(p, "example.com/éàà/ü"));
+        assert!(!m(p, "example.com/e/ü"));
+    }
+
+    #[test]
+    fn wildcard_metachars() {
+        assert!(!m("a.c*", "abc"));
+        assert!(m("a.c*", "a.cX"));
+        assert!(m(r"(x)?+[\$*", r"(x)?+[\$ yes"));
+        assert!(!m(r"(x)?+[\$*", "x"));
+    }
+
+    #[test]
+    fn wildcard_star_matches_newline() {
+        assert!(m("a*b", "a\nb"));
+        assert!(!m("a*b", "a\nb\n"));
+    }
+
+    #[test]
+    fn exact_is_literal_and_anchored() {
+        let re = Regex::new(&exact_to_regex(r"a.c(\d)$")).unwrap();
+        assert!(re.is_match(r"a.c(\d)$"));
+        assert!(!re.is_match("abc(1)"));
+        assert!(!re.is_match(r"xa.c(\d)$"));
+        assert!(!re.is_match("a.c(\\d)$\n"));
     }
 }

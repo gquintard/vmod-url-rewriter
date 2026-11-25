@@ -3,6 +3,7 @@ varnishtest "unreadable files and invalid rules fail the VCL load"
 shell {printf -- '- [unclosed' > ${tmpdir}/bad_yaml.yaml}
 shell {printf -- "- {type: regex, match: '(', output: o}\n" > ${tmpdir}/bad_regex.yaml}
 shell {printf -- "- {type: exact, match: '', output: o}\n- {type: exact, match: m, output: ''}\n" > ${tmpdir}/empty_fields.yaml}
+shell {printf -- "- {type: regex, match: '(a|b)*a(a|b){12}', output: o}\n" > ${tmpdir}/complex.yaml}
 
 server s1 {} -start
 
@@ -45,5 +46,29 @@ varnish v1 -errvcl {rule #2: empty output} {
     backend be none;
     sub vcl_init {
         new r = url_rewriter.rules("${tmpdir}/empty_fields.yaml");
+    }
+}
+
+varnish v1 -errvcl {rule #1: regex too complex to precompute} {
+    import url_rewriter from "${vmod}";
+    backend be none;
+    sub vcl_init {
+        new r = url_rewriter.rules("${tmpdir}/complex.yaml", max_build_mb = 1);
+    }
+}
+
+varnish v1 -errvcl {r: max_build_mb must be positive, not 0} {
+    import url_rewriter from "${vmod}";
+    backend be none;
+    sub vcl_init {
+        new r = url_rewriter.rules("${tmpdir}/complex.yaml", max_build_mb = 0);
+    }
+}
+
+varnish v1 -vcl {
+    import url_rewriter from "${vmod}";
+    backend be none;
+    sub vcl_init {
+        new r = url_rewriter.rules("${tmpdir}/complex.yaml");
     }
 }

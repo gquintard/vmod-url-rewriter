@@ -17,8 +17,11 @@ use std::fmt;
 
 use serde::Deserialize;
 
+mod captures;
 mod glob;
 mod load;
+mod set;
+mod syntax;
 
 /// The kind of a rule, as written in the `type` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -40,16 +43,13 @@ impl fmt::Display for Kind {
 }
 
 #[derive(Debug)]
-pub(crate) enum Matcher {
-    Exact(String),
-    Wildcard(glob::Glob),
-    Regex(regex::Regex),
-}
-
-#[derive(Debug)]
 pub(crate) struct Rule {
-    pub matcher: Matcher,
+    pub kind: Kind,
+    /// The `match` field, as written.
+    pub pattern: String,
     pub output: String,
+    /// For a `regex` rule whose `output` has a `$`, expands its captures into `output`.
+    pub captures: Option<captures::LazyExpander>,
 }
 
 /// The rule that matched a lookup, and what it produced.
@@ -65,8 +65,13 @@ pub struct Match<'a> {
 }
 
 /// An ordered list of rules, where the first matching rule wins.
+///
+/// All rules are compiled at load time into one DFA, so a lookup scans `s` once whatever the
+/// number of rules.
 #[derive(Debug)]
 pub struct Rules {
+    /// Pattern `i` is `rules[i]`.
+    set: set::PatternMatcher,
     rules: Vec<Rule>,
 }
 
@@ -76,41 +81,41 @@ impl Rules {
     /// # Errors
     ///
     /// [`LoadError::Yaml`] if `text` is not a list of `{type, match, output}` objects,
-    /// [`LoadError::Rules`] listing every invalid rule otherwise.
+    /// [`LoadError::Rules`] listing every invalid rule otherwise, [`LoadError::Compile`] if the
+    /// rules are too big to compile together.
     pub fn from_yaml(text: &str) -> Result<Rules, LoadError> {
-        Ok(Rules {
-            rules: load::load(text)?,
-        })
+        Rules::from_yaml_with_limit(text, Rules::DEFAULT_BUILD_LIMIT)
+    }
+
+    /// Default of [`Rules::from_yaml_with_limit`]'s `build_limit`: 1 GiB.
+    pub const DEFAULT_BUILD_LIMIT: usize = 1 << 30;
+
+    /// Like [`Rules::from_yaml`], with at most `build_limit` bytes to build the DFA of all rules
+    /// (the result is much smaller). Rules needing more fail with [`RuleErrorKind::TooComplex`]
+    /// if they are too complex on their own, [`LoadError::Compile`] otherwise.
+    ///
+    /// # Errors
+    ///
+    /// As [`Rules::from_yaml`].
+    pub fn from_yaml_with_limit(text: &str, build_limit: usize) -> Result<Rules, LoadError> {
+        let (set, rules) = load::load(text, build_limit)?;
+        Ok(Rules { set, rules })
     }
 
     /// Return the output of the first rule matching `s`, or `None`.
     #[must_use]
     pub fn lookup<'a>(&'a self, s: &str) -> Option<Match<'a>> {
-        self.rules.iter().enumerate().find_map(|(i, rule)| {
-            let (kind, pattern, output) = match &rule.matcher {
-                Matcher::Wildcard(g) => g.is_match(s).then_some((
-                    Kind::Wildcard,
-                    g.as_str(),
-                    Cow::Borrowed(rule.output.as_str()),
-                ))?,
-                Matcher::Regex(re) => {
-                    let caps = re.captures(s)?;
-                    let mut expanded = String::new();
-                    caps.expand(&rule.output, &mut expanded);
-                    (Kind::Regex, re.as_str(), Cow::Owned(expanded))
-                }
-                Matcher::Exact(m) => (m == s).then_some((
-                    Kind::Exact,
-                    m.as_str(),
-                    Cow::Borrowed(rule.output.as_str()),
-                ))?,
-            };
-            Some(Match {
-                index: i + 1,
-                kind,
-                pattern,
-                output,
-            })
+        let i = self.set.first(s)?;
+        let rule = &self.rules[i];
+        let output = match &rule.captures {
+            Some(expander) => Cow::Owned(expander.expand(&rule.pattern, s, &rule.output)?),
+            None => Cow::Borrowed(rule.output.as_str()),
+        };
+        Some(Match {
+            index: i + 1,
+            kind: rule.kind,
+            pattern: &rule.pattern,
+            output,
         })
     }
 
@@ -134,12 +139,15 @@ pub enum LoadError {
     Yaml(String),
     /// Some rules are invalid.
     Rules(Vec<RuleError>),
+    /// The rules are valid one by one, but their DFA is too big to precompute.
+    Compile(String),
 }
 
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LoadError::Yaml(m) => write!(f, "invalid YAML: {m}"),
+            LoadError::Compile(m) => write!(f, "cannot compile rules: {m}"),
             LoadError::Rules(errors) => {
                 for (i, e) in errors.iter().enumerate() {
                     if i > 0 {
@@ -177,6 +185,8 @@ pub enum RuleErrorKind {
     /// `output` is missing, null or empty.
     EmptyOutput,
     InvalidRegex(String),
+    /// A `regex` whose DFA is too big to precompute, such as `(a|b)*a(a|b){30}`.
+    TooComplex,
     /// Not a `{type, match, output}` object: unknown `type` or key, wrong value type...
     Invalid(String),
 }
@@ -187,6 +197,7 @@ impl fmt::Display for RuleErrorKind {
             RuleErrorKind::EmptyMatch => f.write_str("empty match"),
             RuleErrorKind::EmptyOutput => f.write_str("empty output"),
             RuleErrorKind::InvalidRegex(e) => write!(f, "invalid regex: {e}"),
+            RuleErrorKind::TooComplex => f.write_str("regex too complex to precompute"),
             RuleErrorKind::Invalid(e) => write!(f, "invalid rule: {e}"),
         }
     }
@@ -222,6 +233,13 @@ mod tests {
             (1, Kind::Wildcard, "example.com/trolo/*")
         );
         assert_eq!(r.lookup("example.com/trolo"), None);
+    }
+
+    #[test]
+    fn regex_output_without_dollar_needs_no_captures() {
+        let r = Rules::from_yaml(r"- {type: regex, match: '^/(\w+)$', output: /fixed}").unwrap();
+        assert!(r.rules[0].captures.is_none());
+        assert_eq!(out(&r, "/abc").as_deref(), Some("/fixed"));
     }
 
     #[test]
@@ -270,6 +288,82 @@ mod tests {
     fn regex_empty_expansion_still_matches() {
         let r = Rules::from_yaml("- {type: regex, match: '^/(x?)$', output: '$1'}").unwrap();
         assert_eq!(out(&r, "/").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn metachars_are_literal() {
+        let r = Rules::from_yaml(r"- {type: exact, match: 'a.c(\d)', output: o}").unwrap();
+        assert_eq!(r.lookup("abc1"), None);
+        assert_eq!(out(&r, r"a.c(\d)").as_deref(), Some("o"));
+    }
+
+    #[test]
+    fn first_match_wins_across_kinds() {
+        let r = Rules::from_yaml(
+            "- {type: wildcard, match: 'a*c', output: one}\n- {type: exact, match: axc, output: two}\n- {type: wildcard, match: 'ab*', output: three}",
+        )
+        .unwrap();
+        assert_eq!(out(&r, "abc").as_deref(), Some("one"));
+        assert_eq!(out(&r, "axc").as_deref(), Some("one"));
+        assert_eq!(out(&r, "abd").as_deref(), Some("three"));
+        let r = Rules::from_yaml(
+            "- {type: exact, match: x, output: one}\n- {type: regex, match: b, output: two}\n- {type: wildcard, match: 'ab*', output: three}",
+        )
+        .unwrap();
+        let m = r.lookup("abc").unwrap();
+        assert_eq!((m.index, m.kind), (2, Kind::Regex));
+    }
+
+    #[test]
+    fn regex_flags_do_not_leak() {
+        let r = Rules::from_yaml(
+            "- {type: regex, match: '(?i)^x$', output: one}\n- {type: exact, match: ABC, output: two}",
+        )
+        .unwrap();
+        assert_eq!(out(&r, "X").as_deref(), Some("one"));
+        assert_eq!(r.lookup("abc"), None);
+        assert_eq!(out(&r, "ABC").as_deref(), Some("two"));
+    }
+
+    #[test]
+    fn perl_classes_and_word_boundaries_are_ascii() {
+        let r = Rules::from_yaml(
+            r"- {type: regex, match: '^/w/(\w+)$', output: '$1'}
+- {type: regex, match: '^/d/\d$', output: d}
+- {type: regex, match: '^/s/\s$', output: s}
+- {type: regex, match: '^/b/x\b', output: b}
+- {type: regex, match: '^/c/([\w-]+)$', output: '$1'}
+- {type: regex, match: '^/n/(\W)([^\w])$', output: '$1$2'}
+- {type: regex, match: '^/u/(?u:\w)$', output: u}
+- {type: regex, match: '^/p/(\p{L}+)$', output: '$1'}",
+        )
+        .unwrap();
+        assert_eq!(out(&r, "/w/abc_9").as_deref(), Some("abc_9"));
+        assert_eq!(r.lookup("/w/é"), None);
+        assert_eq!(r.lookup("/d/٣"), None);
+        assert_eq!(r.lookup("/s/\u{a0}"), None);
+        assert_eq!(out(&r, "/b/x-").as_deref(), Some("b"));
+        assert_eq!(out(&r, "/b/xé").as_deref(), Some("b"));
+        assert_eq!(r.lookup("/b/xy"), None);
+        assert_eq!(out(&r, "/c/a-b").as_deref(), Some("a-b"));
+        assert_eq!(r.lookup("/c/é"), None);
+        assert_eq!(out(&r, "/n/éü").as_deref(), Some("éü"));
+        assert_eq!(r.lookup("/u/é"), None);
+        assert_eq!(out(&r, "/p/éü").as_deref(), Some("éü"));
+    }
+
+    #[test]
+    fn dot_and_literals_stay_unicode() {
+        let r = Rules::from_yaml(r"- {type: regex, match: '^/é(.)$', output: '$1'}").unwrap();
+        assert_eq!(out(&r, "/éü").as_deref(), Some("ü"));
+    }
+
+    #[test]
+    fn compile_error_display() {
+        assert_eq!(
+            LoadError::Compile("too big".into()).to_string(),
+            "cannot compile rules: too big"
+        );
     }
 
     #[test]
